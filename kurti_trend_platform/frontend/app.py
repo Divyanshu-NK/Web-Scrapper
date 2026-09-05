@@ -1,3 +1,7 @@
+import os
+import sys
+import threading
+import time
 import streamlit as st
 import pandas as pd
 import requests
@@ -9,6 +13,38 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, date
 
+# ─── Path Resolution & Self-Starting Backend for Cloud Deployment ───────────
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+root_dir = os.path.dirname(parent_dir)
+for p in [root_dir, parent_dir, current_dir]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+API_URL = "http://127.0.0.1:8000"
+
+def ensure_backend_running():
+    try:
+        r = requests.get(f"{API_URL}/", timeout=1)
+        if r.status_code == 200:
+            return
+    except Exception:
+        pass
+    
+    def start_uvicorn():
+        try:
+            import uvicorn
+            from backend.main import app as fastapi_app
+            uvicorn.run(fastapi_app, host="127.0.0.1", port=8000, log_level="warning")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=start_uvicorn, daemon=True)
+    t.start()
+    time.sleep(2.5)
+
+ensure_backend_running()
+
 # ─── Page Configuration ──────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Saheli Fashion Intelligence | Kurti Trend Radar",
@@ -16,8 +52,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-API_URL = "http://127.0.0.1:8000"
 
 # ─── Initialize Session State ────────────────────────────────────────────────
 if "saved_product_ids" not in st.session_state:
