@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aarsi Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wordmark">Aarsi <span>Tracker</span></div>
+  <div class="status-pill" id="global-status" data-state="idle">
+    <span class="dot"></span><span class="label">idle</span>
+  </div>
+</header>
+
+<main>
+
+  <section class="panel">
+    <h1>Capabilities</h1>
+    <p class="lede">What this build can read directly from Aarsi's own catalog data — no proxies, nothing inferred.</p>
+    <div class="tag-grid">
+      {% for cap in capabilities %}
+      <div class="tag" data-status="{{ cap.status }}">
+        <div class="tag-hole"></div>
+        <div class="tag-status">{{ cap.status }}</div>
+        <div class="tag-name">{{ cap.name }}</div>
+        <div class="tag-detail">{{ cap.detail }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h1>Run</h1>
+    <form id="run-form" class="run-form">
+      <label>
+        Collection
+        <input type="text" name="collection" id="collection" value="all-products" autocomplete="off">
+      </label>
+      <label>
+        Sort (captures best-seller rank if set)
+        <select name="sort" id="sort">
+          {% for value, label in sort_options %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" name="also_new_arrivals" id="also_new_arrivals">
+        also fetch New Arrivals
+      </label>
+      <div class="buttons">
+        <button type="button" id="btn-scrape" class="btn primary">Run scraper</button>
+        <button type="button" id="btn-analyze" class="btn">Generate report</button>
+      </div>
+    </form>
+
+    <pre id="console" class="console">waiting for a run…</pre>
+  </section>
+
+  <section class="panel">
+    <h1>Latest snapshot</h1>
+    {% if snapshot.exists %}
+    <div class="stat-row">
+      <div class="stat"><span class="stat-value" id="stat-count">{{ snapshot.product_count }}</span><span class="stat-label">products</span></div>
+      <div class="stat"><span class="stat-value" id="stat-collection">{{ snapshot.collection }}</span><span class="stat-label">collection</span></div>
+      <div class="stat"><span class="stat-value" id="stat-sort">{{ snapshot.sort_by or "—" }}</span><span class="stat-label">sort</span></div>
+      <div class="stat"><span class="stat-value" id="stat-runs">{{ snapshot.total_snapshots }}</span><span class="stat-label">snapshots taken</span></div>
+    </div>
+    <p class="fine" id="stat-time">as of {{ snapshot.scraped_at }}</p>
+    {% if not snapshot.ready_to_diff %}
+    <p class="fine warn">One snapshot so far — run the scraper again to unlock the diff-based capabilities above.</p>
+    {% endif %}
+    {% else %}
+    <p class="fine" id="stat-empty">No snapshots yet. Run the scraper to seed one.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h1>Latest report</h1>
+    <pre id="report" class="report">{{ report or "No report generated yet." }}</pre>
+  </section>
+
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
