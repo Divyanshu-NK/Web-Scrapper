@@ -1,0 +1,62 @@
+name: Daily 11:59 PM Kurti Scraper & Trend Scoring Engine
+
+on:
+  schedule:
+    # Runs daily at 11:59 PM IST (18:29 UTC)
+    - cron: '29 18 * * *'
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Comma separated list of brand platforms to scrape'
+        required: false
+        default: 'all'
+
+jobs:
+  daily-scrape-job:
+    name: Run Scraper, Update Scores & Send Notifications
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r web_scrapping/kurti_trend_platform/requirements.txt
+
+      - name: 🎭 Install Playwright Browsers (Fallback Engine)
+        run: |
+          python -m playwright install --with-deps chromium || true
+
+      - name: 🚀 Run Daily Scraper Pipeline & Trigger Notifications
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          NOTIFICATION_EMAIL: ${{ secrets.NOTIFICATION_EMAIL }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+        run: |
+          python web_scrapping/kurti_trend_platform/daily_runner.py
+
+
+      - name: 💾 Commit & Save Updated Database Snapshots
+        if: always()
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add web_scrapping/kurti_trend_platform/kurti_trend_intelligence.db || true
+          git add web_scrapping/Web_scrapper/aarsi_tracker.db || true
+          git diff --quiet && git diff --staged --quiet || (git commit -m "auto: daily snapshot update [$(date +'%Y-%m-%d')]" && git push)

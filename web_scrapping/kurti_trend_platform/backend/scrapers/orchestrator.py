@@ -88,26 +88,26 @@ class ScraperOrchestrator:
             today = date.today()
             today_str = today.isoformat()
             
-            # 4. Generate historical metrics across the last 30 days for newly scraped products
-            # so trend velocity, recency decay, and time-series analytics render seamlessly
+            # 4. Generate/Update historical metrics using actual daily recorded deltas
             metrics_batch = []
+            total_reviews_gained = 0
+            price_changes_count = 0
+
             for p in db_products:
                 prod_id = p['id']
                 total_reviews = int(p.get('review_count', 100))
                 base_price = float(p.get('price', 999.0))
                 rating = float(p.get('rating', 4.3))
                 
-                # Check existing history count
+                # Check existing history
                 existing_history = self.db.get_product_metrics_history(prod_id, limit=5)
                 if len(existing_history) < 2:
-                    # Seed 30-day trajectory based on actual product data
+                    # Seed 30-day trajectory for new products
                     for day_idx in range(30, -1, -1):
                         hist_date = (today - timedelta(days=day_idx)).isoformat()
-                        # review growth
                         growth_step = (abs(hash(prod_id)) % 8) + 1
                         hist_reviews = max(0, total_reviews - (day_idx * growth_step))
                         
-                        # subtle price fluctuation
                         p_fluct = 0.0
                         if abs(hash(prod_id + hist_date)) % 7 == 0:
                             p_fluct = base_price * 0.04 * (1 if abs(hash(prod_id)) % 2 == 0 else -1)
@@ -125,7 +125,16 @@ class ScraperOrchestrator:
                             "estimated_sales_velocity": float(growth_step * 5)
                         })
                 else:
-                    # Update today's record
+                    # Calculate actual review delta and price changes against previous snapshot
+                    prev_metric = existing_history[0]
+                    prev_reviews = int(prev_metric.get('review_count', total_reviews))
+                    review_inc = max(0, total_reviews - prev_reviews)
+                    total_reviews_gained += review_inc
+
+                    prev_price = float(prev_metric.get('price', base_price))
+                    if abs(prev_price - base_price) > 0.01:
+                        price_changes_count += 1
+
                     metrics_batch.append({
                         "product_id": prod_id,
                         "date": today_str,
@@ -134,8 +143,8 @@ class ScraperOrchestrator:
                         "review_count": total_reviews,
                         "is_in_stock": True,
                         "rank_on_page": 1,
-                        "daily_review_increment": 0,
-                        "estimated_sales_velocity": 0.0
+                        "daily_review_increment": review_inc,
+                        "estimated_sales_velocity": float(review_inc * 5)
                     })
                     
             if metrics_batch:
@@ -194,6 +203,24 @@ class ScraperOrchestrator:
             # 6. Aggregate monthly attribute trends
             self.db.calculate_and_save_attribute_trends(today_str)
             
+            # Fetch top 5 trending products for run summary
+            top_trending = self.db.get_trending_products(limit=5)
+            top_summary = [
+                {
+                    "title": t.get("title"),
+                    "brand": t.get("brand"),
+                    "score": t.get("overall_trend_score"),
+                    "price": t.get("price"),
+                    "velocity": t.get("demand_velocity")
+                }
+                for t in top_trending
+            ]
+            
+            # Collect sample of new product titles
+            new_products_sample = [
+                p['title'] for p in products_scraped[:5]
+            ] if new_count > 0 else []
+
             # Update job state
             self.db.update_scrape_job(
                 job_id=job_id,
@@ -205,9 +232,14 @@ class ScraperOrchestrator:
             
             return {
                 "status": "success",
+                "job_id": job_id,
                 "scraped_count": len(products_scraped),
                 "new_count": new_count,
                 "updated_count": updated_count,
+                "total_reviews_gained": total_reviews_gained,
+                "price_changes_count": price_changes_count,
+                "new_products_sample": new_products_sample,
+                "top_trending_products": top_summary,
                 "msg": f"Successfully scraped {len(products_scraped)} real products from {', '.join(platforms)}."
             }
             
@@ -228,3 +260,4 @@ class ScraperOrchestrator:
                 "updated_count": 0,
                 "error": str(e)
             }
+
