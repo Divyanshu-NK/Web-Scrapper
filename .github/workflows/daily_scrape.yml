@@ -61,9 +61,8 @@ jobs:
 
       - name: 💾 Commit & Save Updated Database Snapshots
         if: always()
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add web_scrapping/kurti_trend_platform/kurti_trend_intelligence.db || true
-          git add web_scrapping/Web_scrapper/aarsi_tracker.db || true
-          git diff --quiet && git diff --staged --quiet || (git commit -m "auto: daily snapshot update [$(date +'%Y-%m-%d')]" && git push)
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "auto: daily snapshot update"
+          file_pattern: "web_scrapping/kurti_trend_platform/kurti_trend_intelligence.db web_scrapping/Web_scrapper/aarsi_tracker.db"
+
