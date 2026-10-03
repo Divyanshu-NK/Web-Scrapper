@@ -59,10 +59,19 @@ jobs:
           python web_scrapping/kurti_trend_platform/daily_runner.py
 
 
+      - name: 🔄 Sync Remote Branch to Prevent Divergence
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+
       - name: 💾 Commit & Save Updated Database Snapshots
         if: always()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "auto: daily snapshot update"
           file_pattern: "web_scrapping/kurti_trend_platform/kurti_trend_intelligence.db web_scrapping/Web_scrapper/aarsi_tracker.db"
+          push_options: '--force'
+
 
