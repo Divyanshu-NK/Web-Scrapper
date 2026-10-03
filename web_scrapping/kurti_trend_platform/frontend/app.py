@@ -35,9 +35,9 @@ def ensure_backend_running():
         try:
             import uvicorn
             from backend.main import app as fastapi_app
-            uvicorn.run(fastapi_app, host="127.0.0.1", port=8000, log_level="warning")
-        except Exception:
-            pass
+            uvicorn.run(fastapi_app, host="127.0.0.1", port=8000, log_level="warning", install_signal_handlers=False)
+        except Exception as e:
+            print(f"Backend start error: {e}")
 
     t = threading.Thread(target=start_uvicorn, daemon=True)
     t.start()
@@ -60,29 +60,178 @@ if "saved_product_ids" not in st.session_state:
 if "theme" not in st.session_state:
     st.session_state.theme = "light"
 
-# ─── API Helper Functions ────────────────────────────────────────────────────
+# ─── Direct High-Performance Cached Database Access Engine ───────────────────
+try:
+    from backend.database import DatabaseManager
+    db_manager = DatabaseManager()
+except Exception:
+    db_manager = None
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_trending_products(limit, min_rating, min_reviews, price_min, price_max, platforms_tuple, keyword):
+    if not db_manager:
+        return []
+    plats = list(platforms_tuple) if platforms_tuple else None
+    return db_manager.get_trending_products(
+        limit=limit,
+        min_rating=min_rating,
+        min_reviews=min_reviews,
+        price_min=price_min,
+        price_max=price_max,
+        platforms=plats,
+        keyword=keyword
+    )
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_all_products(limit, keyword):
+    if not db_manager:
+        return []
+    return db_manager.get_all_products(limit=limit, keyword=keyword)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_all_time_demand(limit, keyword):
+    if not db_manager:
+        return []
+    return db_manager.get_all_time_demand_products(limit=limit, keyword=keyword)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_product_details(product_id):
+    if not db_manager:
+        return {}
+    sql_product = "SELECT * FROM products WHERE id = %s"
+    prod_rows = db_manager.execute_query(sql_product, (product_id,))
+    if not prod_rows:
+        return {}
+    product = prod_rows[0]
+    if not db_manager.is_postgres and isinstance(product.get('attributes'), str):
+        product['attributes'] = db_manager.deserialize_json(product['attributes'])
+    history = db_manager.get_product_metrics_history(product_id, limit=90)
+    sql_score = "SELECT * FROM trend_scores WHERE product_id = %s ORDER BY calculated_date DESC LIMIT 1"
+    score_rows = db_manager.execute_query(sql_score, (product_id,))
+    latest_score = score_rows[0] if score_rows else {}
+    return {
+        "product": product,
+        "score": latest_score,
+        "metrics_history": history
+    }
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_attribute_trends(limit=100):
+    if not db_manager:
+        return []
+    return db_manager.get_attribute_trends(limit=limit)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_get_sources():
+    if not db_manager:
+        return {}
+    return db_manager.get_available_sources()
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_get_saved_products():
+    if not db_manager:
+        return []
+    return db_manager.get_saved_products()
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_get_scraper_jobs(limit=20):
+    if not db_manager:
+        return []
+    return db_manager.get_recent_scrape_jobs(limit=limit)
+
 def api_get(endpoint: str, params: dict = None) -> list:
+    if params is None:
+        params = {}
+    
+    if db_manager:
+        try:
+            if endpoint == "/api/products":
+                limit = params.get("limit", 32)
+                min_rating = params.get("min_rating", 0.0)
+                min_reviews = params.get("min_reviews", 0)
+                price_min = params.get("price_min", 0.0)
+                price_max = params.get("price_max", 99999.0)
+                plats = params.get("platforms")
+                plats_tuple = tuple(plats) if isinstance(plats, list) else (tuple(plats) if isinstance(plats, (set, tuple)) else None)
+                keyword = params.get("keyword", "kurti")
+                return _cached_get_trending_products(limit, min_rating, min_reviews, price_min, price_max, plats_tuple, keyword)
+            
+            elif endpoint == "/api/products/all":
+                limit = params.get("limit", 200)
+                keyword = params.get("keyword")
+                return _cached_get_all_products(limit, keyword)
+                
+            elif endpoint == "/api/products/all-time-demand":
+                limit = params.get("limit", 50)
+                keyword = params.get("keyword", "kurti")
+                return _cached_get_all_time_demand(limit, keyword)
+                
+            elif endpoint.startswith("/api/products/"):
+                prod_id = endpoint.replace("/api/products/", "")
+                return _cached_get_product_details(prod_id)
+                
+            elif endpoint == "/api/analytics/attributes":
+                limit = params.get("limit", 100)
+                return _cached_get_attribute_trends(limit)
+                
+            elif endpoint == "/api/sources":
+                return _cached_get_sources()
+                
+            elif endpoint == "/api/saved-products":
+                return _cached_get_saved_products()
+
+            elif endpoint == "/api/scraper/jobs":
+                limit = params.get("limit", 20)
+                return _cached_get_scraper_jobs(limit)
+        except Exception:
+            pass
+
     try:
-        r = requests.get(f"{API_URL}{endpoint}", params=params, timeout=15)
+        r = requests.get(f"{API_URL}{endpoint}", params=params, timeout=5)
         if r.status_code == 200:
             return r.json()
-        else:
-            st.error(f"API Error ({r.status_code}): {r.text}")
-            return []
-    except Exception as e:
-        st.warning(f"Backend notice: Server at {API_URL} is unreachable ({e}).")
+        return []
+    except Exception:
         return []
 
 def api_post(endpoint: str, params: dict = None) -> dict:
+    st.cache_data.clear()
+    if db_manager:
+        try:
+            if endpoint.startswith("/api/saved-products/"):
+                prod_id = endpoint.replace("/api/saved-products/", "")
+                db_manager.save_product(prod_id)
+                return {"status": "saved", "product_id": prod_id}
+            elif endpoint == "/api/sources":
+                name = params.get("name") if params else None
+                url = params.get("url") if params else None
+                if name and url:
+                    res = db_manager.add_custom_source(name, url)
+                    return res
+        except Exception:
+            pass
     try:
-        r = requests.post(f"{API_URL}{endpoint}", params=params, timeout=15)
+        r = requests.post(f"{API_URL}{endpoint}", params=params, timeout=10)
         return r.json() if r.status_code == 200 else {}
     except Exception:
         return {}
 
 def api_delete(endpoint: str) -> dict:
+    st.cache_data.clear()
+    if db_manager:
+        try:
+            if endpoint.startswith("/api/saved-products/"):
+                prod_id = endpoint.replace("/api/saved-products/", "")
+                db_manager.remove_saved_product(prod_id)
+                return {"status": "removed", "product_id": prod_id}
+            elif endpoint.startswith("/api/sources/"):
+                brand_key = endpoint.replace("/api/sources/", "")
+                res = db_manager.remove_custom_source(brand_key)
+                return res
+        except Exception:
+            pass
     try:
-        r = requests.delete(f"{API_URL}{endpoint}", timeout=15)
+        r = requests.delete(f"{API_URL}{endpoint}", timeout=10)
         return r.json() if r.status_code == 200 else {}
     except Exception:
         return {}
@@ -1091,25 +1240,48 @@ with st.sidebar:
     st.markdown("**Live Scraper Trigger**")
     st.caption("Pulls real product feeds and parses design attributes with automatic deduplication.")
 
-    if st.button("Trigger Live Scraping", use_container_width=True):
-        plats_list = [p.lower() for p in platforms]
-        if not plats_list:
-            st.error("Select at least one brand or marketplace.")
-        else:
-            with st.spinner("Scraping live brand catalogs..."):
-                params = {"platforms": plats_list, "keyword": keyword}
-                try:
-                    r = requests.post(f"{API_URL}/api/scraper/scrape", params=params, timeout=12)
-                    if r.status_code == 200:
-                        st.success("Scrape job triggered successfully.")
+    col_ref1, col_ref2 = st.columns(2)
+    with col_ref1:
+        if st.button("🔄 Refresh Data", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+    with col_ref2:
+        if st.button("Trigger Live Scraping", use_container_width=True):
+            plats_list = [p.lower() for p in platforms]
+            if not plats_list:
+                st.error("Select at least one brand or marketplace.")
+            else:
+                with st.spinner("Scraping live brand catalogs..."):
+                    params = {"platforms": plats_list, "keyword": keyword}
+                    success = False
+                    try:
+                        r = requests.post(f"{API_URL}/api/scraper/scrape", params=params, timeout=5)
+                        if r.status_code == 200:
+                            success = True
+                    except Exception:
+                        pass
+                    
+                    if not success and db_manager:
+                        try:
+                            from backend.scrapers.orchestrator import ScraperOrchestrator
+                            def run_in_bg():
+                                orch = ScraperOrchestrator(db_manager)
+                                orch.run_orchestrator(platforms=plats_list, keyword=keyword)
+                            t = threading.Thread(target=run_in_bg, daemon=True)
+                            t.start()
+                            success = True
+                        except Exception as e:
+                            st.error(f"Background scraper trigger notice: {e}")
+                    
+                    if success:
+                        st.cache_data.clear()
+                        st.success("Scrape job triggered in background.")
                         st.rerun()
                     else:
-                        st.error(f"Scrape initiation failed: {r.text}")
-                except Exception as e:
-                    st.error(f"Scraper error: {e}")
+                        st.error("Could not trigger live scraper.")
 
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-    st.caption(f"Server: {API_URL}")
+    st.caption(f"Engine: Fast WAL Cached DB")
     st.caption(f"Refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ─── Main Content & Executive KPI Metrics ─────────────────────────────────────

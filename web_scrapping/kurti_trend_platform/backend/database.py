@@ -47,7 +47,9 @@ class DatabaseManager:
             cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             return conn, cursor
         else:
-            conn = sqlite3.connect(self.sqlite_path)
+            conn = sqlite3.connect(self.sqlite_path, timeout=30.0)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             return conn, cursor
